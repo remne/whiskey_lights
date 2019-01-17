@@ -20,6 +20,9 @@ void setup()
   // this resets all the neopixels to an off state
   strip.Begin();
   strip2.Begin();
+
+  init_leds();
+
   strip.Show();
   strip2.Show();
 }
@@ -28,11 +31,23 @@ uint8_t r = 0;
 uint8_t g = 10;
 uint8_t b = 0;
 
+void init_leds()
+{
+  for (uint i = 0; i < 20; i++)
+  {
+    strip.SetPixelColor(i, RgbwColor(0, g, 0));
+    strip2.SetPixelColor(i, RgbwColor(r, 0, 0));
+    r += 10;
+    g += 10;
+  }
+  
+}
 
 void loop()
 {
   long now = millis();
 
+  /*
   r = (r+1) % 20;
   g = (g+1) % 20;
   for (uint i = 0; i < NUM_OF_LEDS; i++)
@@ -40,10 +55,13 @@ void loop()
     strip.SetPixelColor(i, RgbwColor(0, g, 0));
     strip2.SetPixelColor(i, RgbwColor(r, 0, 0));
   }
-
+  */
+  strip.RotateLeft(1);
+  strip2.RotateLeft(1);
   strip.Show();
   strip2.Show();
 
+  
   {
     Serial.printf("loop: %lu \n", now - prev);
     prev = now;
