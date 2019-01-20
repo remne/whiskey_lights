@@ -340,7 +340,7 @@ static bool mqttParsePayload(const char *jsonData)
   JsonObject& jsonObj = jsonBuffer.parseObject(jsonData);
   if (!jsonObj.success())
   {
-    Serial.println(MQTT_LOG "parseObject() failed");
+    Serial.println(MQTT_LOG "Error parsing json data" NL);
     return false;
   }
 
