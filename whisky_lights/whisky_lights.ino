@@ -14,9 +14,9 @@ Example configuration for Home Assistant
 light:
   - platform: mqtt
     schema: json
-    name: whiskey_lights
-    state_topic: "whiskey_lights/state"
-    command_topic: "whiskey_lights/set"
+    name: whisky_lights
+    state_topic: "whisky_lights/state"
+    command_topic: "whisky_lights/set"
     brightness: true
     rgb: true
     white_value: true
@@ -49,15 +49,15 @@ light:
 
 #define WIFI_AP_SSID                ""            /*!< Wifi accesspoint SSID */
 #define WIFI_AP_PASSWORD            ""               /*!< Wifi accesspoint password */
-#define WIFI_HOSTNAME               "whiskey_lights"          /*!< Hostname of this controller */
+#define WIFI_HOSTNAME               "whisky_lights"          /*!< Hostname of this controller */
 #define WIFI_NUM_RETRIES_REBOOT     5
 #define WIFI_LOG                    "WIFI: "
 
 #define MQTT_SERVER_IP              "192.168.0.1"             /*!< IP to an MQTT server */
 #define MQTT_SERVER_PORT            1883                      /*!< Port number to an MQTT server */
-#define MQTT_CLIENT_ID              "whiskey_lights"          /*!< MQTT client id */
-#define MQTT_SET_TOPIC              "whiskey_lights/set"      /*!< MQTT set topic */
-#define MQTT_STATE_TOPIC            "whiskey_lights/state"    /*!< MQTT state topic */
+#define MQTT_CLIENT_ID              "whisky_lights"          /*!< MQTT client id */
+#define MQTT_SET_TOPIC              "whisky_lights/set"      /*!< MQTT set topic */
+#define MQTT_STATE_TOPIC            "whisky_lights/state"    /*!< MQTT state topic */
 #define MQTT_LOG                    "MQTT: "
 #define MQTT_NUM_RETRIES_REBOOT     5
 
