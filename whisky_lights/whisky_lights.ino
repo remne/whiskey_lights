@@ -44,7 +44,14 @@ light:
 #include <ArduinoOTA.h>
 
 /****** Defines *******/
+//#define STRIP2  1
+
+#ifdef STRIP2
+#define NUM_OF_LEDS                 115*4                     /*!< Must be 4 or more */
+#else
 #define NUM_OF_LEDS                 115*8                     /*!< Must be 4 or more */
+#endif
+
 #define ON_BOARD_LED_BLINK_DELAY    2000                      /*!< Delay in ms between led toggle */
 
 #define WIFI_AP_SSID                ""            /*!< Wifi accesspoint SSID */
@@ -66,16 +73,14 @@ light:
 #define OTA_LOG                     "LOG: "
 
 #define LED_LOG                     "LED: "
-#define LED_WELCOME_STATE_IDLE      0
-#define LED_WELCOME_STATE_SPARKS    1
-#define LED_WELCOME_STATE_GLOW      2
-#define LED_WELCOME_STATE_GOODBYE   3
 
 #define LED_STATE_ON                1
 #define LED_STATE_OFF               0
 #define LED_INVALID_EFFECT          0xFF
 
 #define SIZE_OF(x)                  (sizeof(x) / sizeof(x[0]))
+#define MAX(a, b)                   ((a > b) ? (a) : (b))
+#define MIN(a, b)                   ((a < b) ? (a) : (b))
 /****** Typedefs *******/
 
 typedef struct MqttContext_st
@@ -127,8 +132,18 @@ static void ledHandle(void);
 static void effectSolidLoop(void);
 static void effectWelcomeInit(void);
 static void effectWelcomeLoop(void);
+
+static void welcomeSpark(void);
+static void welcomeFadeToWhite(void);
+
+
 static void effectXmasInit(void);
 static void effectXmasLoop(void);
+
+static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value);
+static void fadeOut(const uint16_t pixel, const uint8_t value);
+static void FadeIn(const uint16_t pixel, const uint8_t value);
+
 
 /****** Globals *******/
 
@@ -143,7 +158,9 @@ Effect effects[] =
 NeoPixelBus<NeoGrbwFeature, NeoEsp8266Dma800KbpsMethod> strip(NUM_OF_LEDS, 0); 
 
 /* Pixelpin is ignored on ESP8266 with NeoEsp8266AsyncUart1800KbpsMethod. Connect to RX on Wemos mini */
-//NeoPixelBus<NeoGrbwFeature, NeoEsp8266AsyncUart1800KbpsMethod> strip2(NUM_OF_LEDS, 2); 
+#ifdef STRIP2
+NeoPixelBus<NeoGrbwFeature, NeoEsp8266AsyncUart1800KbpsMethod> strip2(NUM_OF_LEDS, 2); 
+#endif
 
 LedContext ledContext;
 
@@ -151,6 +168,8 @@ long last = 0;
 long prev = 0;
 long now = 0;
 uint8_t ledToggle = 0;
+uint8_t frameCnt = 0;
+
 
 WiFiClient wifiClient;
 
@@ -336,7 +355,7 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length)
 
 static bool mqttParsePayload(const char *jsonData)
 {
-  StaticJsonBuffer<200> jsonBuffer;
+  StaticJsonBuffer<150> jsonBuffer;
   JsonObject& jsonObj = jsonBuffer.parseObject(jsonData);
   if (!jsonObj.success())
   {
@@ -418,13 +437,21 @@ static bool mqttParsePayload(const char *jsonData)
 
 static void mqttSendResponse(void)
 {
-  StaticJsonBuffer<200> jsonBuffer;
+  StaticJsonBuffer<250> jsonBuffer;
   JsonObject& jsonObj = jsonBuffer.createObject();
   jsonObj["state"] = ledContext.state;
   jsonObj["brightness"] = ledContext.brightness;
   jsonObj["state"] = ((ledContext.state == LED_STATE_ON) ? "ON" : "OFF");
   jsonObj["white_value"] = ledContext.whiteValue;
-  jsonObj["effect"] = effects[ledContext.effect].effect;
+  if (ledContext.nextEffect != LED_INVALID_EFFECT)
+  {
+    jsonObj["effect"] = effects[ledContext.nextEffect].effect;
+  }
+  else
+  {
+    jsonObj["effect"] = effects[ledContext.effect].effect;
+  }
+  
   JsonObject& color = jsonObj.createNestedObject("color");
   color["r"] = ledContext.colorR;
   color["g"] = ledContext.colorG;
@@ -447,20 +474,25 @@ static void mqttSendResponse(void)
 static void initSk6812(void)
 {
   strip.Begin();
-  //strip2.Begin();
+  strip.Show();
+
+#ifdef STRIP2
+  strip2.Begin();
+  strip2.Show();
+#endif
 
   sk6812Clear();
-
-  strip.Show();
-  //strip2.Show();
 }
 
 static void sk6812Clear()
 {
   strip.ClearTo(RgbwColor(0, 0, 0, 0));
-  //strip2.ClearTo(RgbwColor(0, 0, 0, 0));
   strip.Show();
-  //strip2.Show();
+
+#ifdef STRIP2
+  strip2.ClearTo(RgbwColor(0, 0, 0, 0));
+  strip2.Show();
+#endif
 }
 
 static void ledInit()
@@ -470,6 +502,8 @@ static void ledInit()
 
 static void ledHandle()
 {
+  static uint8_t dirty = false;
+
   if (ledContext.nextEffect != LED_INVALID_EFFECT)
   {
     ledContext.effect = ledContext.nextEffect;
@@ -482,8 +516,19 @@ static void ledHandle()
       
   }
 
-  void (*LoopFunc)(void) = effects[ledContext.effect].LoopFunc;
-  (*LoopFunc)();
+  if (!dirty)
+  {
+    dirty = true;
+    void (*LoopFunc)(void) = effects[ledContext.effect].LoopFunc;
+    (*LoopFunc)();
+  }
+
+  if (strip.CanShow())
+  {
+    strip.Show();
+    frameCnt++;
+    dirty = false;
+  }
 }
 
 static void effectSolidLoop(void)
@@ -495,41 +540,260 @@ static void effectSolidLoop(void)
   r = (int)((double)r * intensity);
   g = (int)((double)g * intensity);
   b = (int)((double)b * intensity);
+  //delay(100);
 
   strip.ClearTo(RgbwColor(r,
                           g,
                           b,
                           ledContext.whiteValue));
-  //strip2.ClearTo(RgbwColor(r,
-  //                         g,
-  //                         b,
-  //                         ledContext.whiteValue));
-  strip.Show();
-  //strip2.Show();
+
+/*
+  for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
+  {
+    strip.SetPixelColor(i, RgbwColor(r,
+                          g,
+                          b,
+                          ledContext.whiteValue));
+  }
+  long t = random(NUM_OF_LEDS-1);
+  strip.SetPixelColor(t, RgbwColor(0,
+                        255,
+                        0,
+                        0));
+*/
+#ifdef STRIP2
+  strip2.ClearTo(RgbwColor(r,
+                           g,
+                           b,
+                           ledContext.whiteValue));
+#endif                           
 }
 
+uint8_t wSparkBrightness;
+uint8_t wFadeToWhiteValue;
+
+uint8_t welcomeState;
+long wTimeStart;
 static void effectWelcomeInit(void)
 {
   sk6812Clear();
+  wSparkBrightness = 0;
+  wFadeToWhiteValue = 0;
 
+  wTimeStart = millis();
 }
 
+/**
+ * (ms)
+ *  0     sparks starts fade up until reaching 99% brightness from black.
+ *  5000  sparks starts fade to color white until 100% RGB white.
+ *  6000  Fade up goes to fade glow with Warm white led.
+ *  30000 Fade out to black.
+ * 
+ */
 static void effectWelcomeLoop(void)
 {
-  static uint8_t state = LED_WELCOME_STATE_IDLE;
+
+  
+  long delta = millis() - wTimeStart;
+  if (delta < 20000)
+  {
+    // sparks fade up from black
+    if ((delta % 100) == 0)
+      wSparkBrightness = MIN(252, wSparkBrightness + 1);
+    welcomeSpark();
+    //printf("sparkbrightness: %u\n", wSparkBrightness);
+  }
+  else if (delta < 40000)
+  {
+    // spark with fade to white
+    welcomeSpark();
+    welcomeFadeToWhite();
+    wFadeToWhiteValue = MIN(252, wFadeToWhiteValue + 1);
+    //printf("white fade val: %u \n", wFadeToWhiteValue);
+  }
+  else if (delta < 80000)
+  {
+    // fade glow
+
+  }
+  else if (delta < 90000)
+  {
+    // fade out to black
+  }
+  else
+  {
+    // do nothing
+  }
+  
+}
 
 
+long wLast = 0;
+static void welcomeSpark(void)
+{
+  double intensity = (double)((double)wSparkBrightness / (double)255);
+  RgbwColor blueWhiteDim(
+                        0,
+                        0,
+                        (uint8_t)((double)100 * intensity),
+                        (uint8_t)((double)100 * intensity)
+                        );
+  RgbwColor blueWhite(
+                        0,
+                        0,
+                        (uint8_t)((double)255 * intensity),
+                        (uint8_t)((double)255 * intensity)
+                        );
 
+  long r = random(0, 200);
+  //if (r == 0) 
+  long wNow = millis();
+  if (wNow - wLast > 1000)
+  {
+    wLast = wNow;
+    // draw a new big star random times
+    //long pixel = random(NUM_OF_LEDS-2);
+    long pixel = 6;
+    strip.SetPixelColor(pixel-1, blueWhiteDim);
+    strip.SetPixelColor(pixel, blueWhite);
+    strip.SetPixelColor(pixel+1, blueWhiteDim);
+  }
+  for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
+  {
+    //fadeOut(i, 100);
+    RgbwColor color = strip.GetPixelColor(i);
+
+    if (color.B > 20)
+    {
+      color.B -= 20;
+    }
+    else if (color.B > 0)
+    {
+      color.B--;
+    }
+
+    if (color.W > 20)
+    {
+      color.W -= 20;
+    }
+    else if (color.W > 0)
+    {
+      color.W--;
+    }
+
+    color.G = 0; // kill the sparks
+    strip.SetPixelColor(i, color);
+  }
+  
+  uint8_t randomNumOfSparks = random(1, 40);
+  for (uint16_t i = 0; i < randomNumOfSparks; i++)
+  {
+    long t = random(NUM_OF_LEDS-1);
+    strip.SetPixelColor(t, RgbwColor(0,
+                          (uint8_t)((double)255 * intensity),
+                          0,
+                          0));
+  }
+}
+
+static void welcomeFadeToWhite(void)
+{
+  for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
+  {
+    RgbwColor color = strip.GetPixelColor(i);
+    color.R = MAX(wFadeToWhiteValue, color.R);
+    color.G = MAX(wFadeToWhiteValue, color.G);
+    color.B = MAX(wFadeToWhiteValue, color.B);
+    color.W = MAX(wFadeToWhiteValue, color.W);
+    strip.SetPixelColor(i, color);
+  }
 }
 
 static void effectXmasInit(void)
 {
-
+  sk6812Clear();
 }
 
 static void effectXmasLoop(void)
 {
+  uint8_t doit = random(0, 200);
+  if (doit == 0)
+  {
+    //Serial.printf("FLash!\n");
+    uint8_t pixel = random(NUM_OF_LEDS-1);
+  
+    if (pixel > 0)
+    {
+      strip.SetPixelColor(pixel-1, RgbwColor(0, 0, 100, 30));
+    }
+    
+    strip.SetPixelColor(pixel, RgbwColor(0, 0, 255, 255));
+  
+    if (pixel < (NUM_OF_LEDS-1))
+    {
+      strip.SetPixelColor(pixel+1, RgbwColor(0, 0, 100, 30));
+    }
+  }
+  
+  double intensity = (double)((double)ledContext.brightness / (double)255);
+  uint8_t r = (int)((double)255 * intensity);  
+  
+  // calculate decay of brightness 
+  for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
+  {
+    RgbwColor color = strip.GetPixelColor(i);
 
+    if (color.W >= 10)
+    {
+      color.W -= 10;
+    }
+    else if (color.W > 0)
+    {
+      color.W--;
+    }
+
+    if (color.B >= 5)
+    {
+      color.B -= 5;
+    }
+    else if (color.B > 0)
+    {
+      color.B--;
+    }
+    
+    if (color.R < r)
+    {
+      color.R++;
+    }
+
+    //Serial.printf("%u  W:%u \t R:%u \t B:%u \n", i, color.W, color.R, color.B);
+    strip.SetPixelColor(i, color);
+  }
+}
+
+static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value)
+{
+  RgbwColor color = strip.GetPixelColor(pixel);
+  color.R = (color.R + targetColor.R) / 2;
+  color.G = (color.G + targetColor.G) / 2;
+  color.B = (color.B + targetColor.B) / 2;
+}
+
+static void fadeOut(const uint16_t pixel, const uint8_t value)
+{
+  RgbwColor color = strip.GetPixelColor(pixel);
+  color.R = (color.R <= 20) ? 0 : (uint8_t)(color.R-(color.R*((float)value/256)));
+  color.G = (color.G <= 20) ? 0 : (uint8_t)(color.G-(color.G*((float)value/256)));
+  color.B = (color.B <= 20) ? 0 : (uint8_t)(color.B-(color.B*((float)value/256)));
+}
+
+static void FadeIn(const uint16_t pixel, const uint8_t value)
+{
+  RgbwColor color = strip.GetPixelColor(pixel);
+  color.R = MIN(255, MAX(color.R+(color.R*(value/256)), 0));
+  color.G = MIN(255, MAX(color.G+(color.G*(value/256)), 0));
+  color.B = MIN(255, MAX(color.B+(color.B*(value/256)), 0));
 }
 
 /****** Arduino framework callbacks *******/
@@ -544,17 +808,17 @@ void setup()
   initMqttClient();
 }
 
-
-
 void loop()
 {
   now = millis();
   ArduinoOTA.handle();
   mqttHandle();
-  ledHandle();
+  
+  if ((now - prev) > 1000)
   {
-    //Serial.printf("loop: %lu \n", now - prev);
+    Serial.printf("fCnt: %u  effect: %u (%s)\n", frameCnt, ledContext.effect, effects[ledContext.effect].effect);
     prev = now;
+    frameCnt = 0;
   }
 
   if (now - last >= ON_BOARD_LED_BLINK_DELAY)
@@ -564,4 +828,6 @@ void loop()
     ledToggle ^= 1;
     //Serial.printf("%lu %u" NL, now, ledToggle);
   }
+
+  ledHandle();
 }
