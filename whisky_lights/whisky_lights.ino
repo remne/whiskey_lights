@@ -11,6 +11,7 @@
 
 Example configuration for Home Assistant
 
+HA >= 0.84:
 light:
   - platform: mqtt
     schema: json
@@ -25,8 +26,24 @@ light:
     effect: true
     effect_list:
       - Solid
-      - Centurion
-      - Rainbow
+      - Xmas
+      - Welcome
+
+
+HA < 0.84:
+light:
+  - platform: mqtt_json
+    name: whisky_lights
+    state_topic: "whisky_lights/state"
+    command_topic: "whisky_lights/set"
+    brightness: true
+    rgb: true
+    white_value: true
+    qos: 0
+    optimistic: false
+    effect: true
+    effect_list:
+      - Solid
       - Xmas
       - Welcome
 
@@ -49,7 +66,7 @@ light:
 #ifdef STRIP2
 #define NUM_OF_LEDS                 115*4                     /*!< Must be 4 or more */
 #else
-#define NUM_OF_LEDS                 115*8                     /*!< Must be 4 or more */
+#define NUM_OF_LEDS                 115*6                     /*!< Must be 4 or more */
 #endif
 
 #define ON_BOARD_LED_BLINK_DELAY    2000                      /*!< Delay in ms between led toggle */
@@ -141,8 +158,8 @@ static void effectXmasInit(void);
 static void effectXmasLoop(void);
 
 static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value);
-static void fadeOut(const uint16_t pixel, const uint8_t value);
-static void FadeIn(const uint16_t pixel, const uint8_t value);
+static void fadeToBlack(const uint16_t pixel, const uint8_t value);
+static void fadeToWhite(const uint16_t pixel, const uint8_t value);
 
 
 /****** Globals *******/
@@ -201,7 +218,7 @@ static void initWifi(void)
     
     if (numRetries > WIFI_NUM_RETRIES_REBOOT)
     {
-      Serial.printf(WIFI_LOG "Rebooting" NL, numRetries);
+      Serial.printf(WIFI_LOG "Rebooting" NL);
       ESP.restart();
     }
   }
@@ -337,7 +354,7 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length)
 {
   Serial.println();
   Serial.printf(MQTT_LOG "Received topic: %s" NL, topic);
-  for (int i = 0; i < length; i++)
+  for (uint16_t i = 0; i < length; i++)
   {
     Serial.print((char)payload[i]);
   }
@@ -416,7 +433,7 @@ static bool mqttParsePayload(const char *jsonData)
     {
       if (strcmp(effects[i].effect, jsonObj["effect"]) == 0)
       {
-        Serial.printf(MQTT_LOG "Setting effect: %u" NL);
+        Serial.printf(MQTT_LOG "Setting effect: %u" NL, i);
         ledContext.nextEffect = i;
         found = true;
         break;
@@ -599,18 +616,17 @@ static void effectWelcomeLoop(void)
   if (delta < 20000)
   {
     // sparks fade up from black
-    if ((delta % 100) == 0)
-      wSparkBrightness = MIN(252, wSparkBrightness + 1);
+    wSparkBrightness = MIN(254, wSparkBrightness + 1);
     welcomeSpark();
-    //printf("sparkbrightness: %u\n", wSparkBrightness);
+    //Serial.printf("sparkbrightness: %u\n", wSparkBrightness);
   }
   else if (delta < 40000)
   {
     // spark with fade to white
     welcomeSpark();
     welcomeFadeToWhite();
-    wFadeToWhiteValue = MIN(252, wFadeToWhiteValue + 1);
-    //printf("white fade val: %u \n", wFadeToWhiteValue);
+    wFadeToWhiteValue = MIN(25, wFadeToWhiteValue + 1);
+    //Serial.printf("white fade val: %u \n", wFadeToWhiteValue);
   }
   else if (delta < 80000)
   {
@@ -619,7 +635,10 @@ static void effectWelcomeLoop(void)
   }
   else if (delta < 90000)
   {
-    // fade out to black
+    for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
+    {
+      //fadeToBlack(i, 10);
+    }
   }
   else
   {
@@ -646,7 +665,7 @@ static void welcomeSpark(void)
                         (uint8_t)((double)255 * intensity)
                         );
 
-  long r = random(0, 200);
+  //long r = random(0, 200);
   //if (r == 0) 
   long wNow = millis();
   if (wNow - wLast > 1000)
@@ -780,20 +799,25 @@ static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint
   color.B = (color.B + targetColor.B) / 2;
 }
 
-static void fadeOut(const uint16_t pixel, const uint8_t value)
+static void fadeToBlack(const uint16_t pixel, const uint8_t value)
 {
   RgbwColor color = strip.GetPixelColor(pixel);
   color.R = (color.R <= 20) ? 0 : (uint8_t)(color.R-(color.R*((float)value/256)));
   color.G = (color.G <= 20) ? 0 : (uint8_t)(color.G-(color.G*((float)value/256)));
   color.B = (color.B <= 20) ? 0 : (uint8_t)(color.B-(color.B*((float)value/256)));
+
+  if (pixel == 2)
+  {
+    Serial.printf("fade2w: %u %u %u \n", color.R, color.G, color.B);
+  }
 }
 
-static void FadeIn(const uint16_t pixel, const uint8_t value)
+static void fadeToWhite(const uint16_t pixel, const uint8_t value)
 {
   RgbwColor color = strip.GetPixelColor(pixel);
-  color.R = MIN(255, MAX(color.R+(color.R*(value/256)), 0));
-  color.G = MIN(255, MAX(color.G+(color.G*(value/256)), 0));
-  color.B = MIN(255, MAX(color.B+(color.B*(value/256)), 0));
+  color.R = MIN(255, MAX(color.R+(color.R*((float)value/256)), 0));
+  color.G = MIN(255, MAX(color.G+(color.G*((float)value/256)), 0));
+  color.B = MIN(255, MAX(color.B+(color.B*((float)value/256)), 0));
 }
 
 /****** Arduino framework callbacks *******/
