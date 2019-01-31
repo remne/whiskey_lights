@@ -28,7 +28,7 @@ light:
       - Solid
       - Xmas
       - Welcome
-      - Cycle
+      - Falling
 
 
 HA < 0.84:
@@ -47,7 +47,7 @@ light:
       - Solid
       - Xmas
       - Welcome
-      - Scroll
+      - Falling
 
 
 */
