@@ -28,6 +28,7 @@ light:
       - Solid
       - Xmas
       - Welcome
+      - Cycle
 
 
 HA < 0.84:
@@ -46,6 +47,7 @@ light:
       - Solid
       - Xmas
       - Welcome
+      - Scroll
 
 
 */
@@ -66,7 +68,9 @@ light:
 #ifdef STRIP2
 #define NUM_OF_LEDS                 115*4                     /*!< Must be 4 or more */
 #else
-#define NUM_OF_LEDS                 115*6                     /*!< Must be 4 or more */
+#define NUM_OF_LEDS_PER_SEGMENT     114
+#define NUM_OF_SEGMENTS             7
+#define NUM_OF_LEDS                 (NUM_OF_LEDS_PER_SEGMENT * NUM_OF_SEGMENTS)
 #endif
 
 #define ON_BOARD_LED_BLINK_DELAY    2000                      /*!< Delay in ms between led toggle */
@@ -142,7 +146,7 @@ static void mqttSendResponse(void);
 static void initSk6812(void);
 static void sk6812Clear(void);
 
-static void ledInit(void);
+static void initLed(void);
 static void ledHandle(void);
 
 /* LED effect static functions */
@@ -153,14 +157,17 @@ static void effectWelcomeLoop(void);
 static void welcomeSpark(void);
 static void welcomeFadeToWhite(void);
 
-
 static void effectXmasInit(void);
 static void effectXmasLoop(void);
 
-static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value);
-static void fadeToBlack(const uint16_t pixel, const uint8_t value);
-static void fadeToWhite(const uint16_t pixel, const uint8_t value);
+static void effectFallingInit(void);
+static void effectFallingLoop(void);
 
+static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value);
+static void fadeToWhite(RgbwColor& color, const uint8_t value, const uint8_t max);
+static void fadeToBlack(RgbwColor& color, const uint8_t value);
+
+static void handleWifiMqtt();
 
 /****** Globals *******/
 
@@ -168,7 +175,8 @@ Effect effects[] =
 {
   { "Solid", NULL, &effectSolidLoop },
   { "Welcome", &effectWelcomeInit, &effectWelcomeLoop },
-  { "Xmas", &effectXmasInit, &effectXmasLoop}
+  { "Xmas", &effectXmasInit, &effectXmasLoop},
+  { "Falling", &effectFallingInit, &effectFallingLoop},
 };
 
 /* Pixelpin is ignored on ESP8266 with NeoEsp8266Dma800KbpsMethod. Connect to D4 on Wemos mini */
@@ -184,6 +192,7 @@ LedContext ledContext;
 long last = 0;
 long prev = 0;
 long now = 0;
+long timeDelta;
 uint8_t ledToggle = 0;
 uint8_t frameCnt = 0;
 
@@ -386,7 +395,7 @@ static bool mqttParsePayload(const char *jsonData)
     {
       if (ledContext.state == LED_STATE_OFF)
       {
-        ledInit();
+        initLed();
         ledContext.colorR = 255;
         ledContext.colorG = 255;
         ledContext.colorB = 255;
@@ -397,7 +406,7 @@ static bool mqttParsePayload(const char *jsonData)
     }
     else
     {
-      ledInit();
+      initLed();
       ledContext.state = LED_STATE_OFF;
     }
   }
@@ -512,7 +521,7 @@ static void sk6812Clear()
 #endif
 }
 
-static void ledInit()
+static void initLed()
 {
     memset(&ledContext, 0, sizeof(ledContext));
 }
@@ -586,16 +595,15 @@ static void effectSolidLoop(void)
 #endif                           
 }
 
-uint8_t wSparkBrightness;
-uint8_t wFadeToWhiteValue;
-
+double wSparkBrightness;
+double wWhiteValue;
 uint8_t welcomeState;
 long wTimeStart;
 static void effectWelcomeInit(void)
 {
   sk6812Clear();
-  wSparkBrightness = 0;
-  wFadeToWhiteValue = 0;
+  wSparkBrightness = 1;
+  wWhiteValue = 1;
 
   wTimeStart = millis();
 }
@@ -610,13 +618,11 @@ static void effectWelcomeInit(void)
  */
 static void effectWelcomeLoop(void)
 {
-
-  
   long delta = millis() - wTimeStart;
   if (delta < 20000)
   {
     // sparks fade up from black
-    wSparkBrightness = MIN(254, wSparkBrightness + 1);
+    wSparkBrightness = MIN(254, wSparkBrightness + wSparkBrightness*0.02);
     welcomeSpark();
     //Serial.printf("sparkbrightness: %u\n", wSparkBrightness);
   }
@@ -625,8 +631,6 @@ static void effectWelcomeLoop(void)
     // spark with fade to white
     welcomeSpark();
     welcomeFadeToWhite();
-    wFadeToWhiteValue = MIN(25, wFadeToWhiteValue + 1);
-    //Serial.printf("white fade val: %u \n", wFadeToWhiteValue);
   }
   else if (delta < 80000)
   {
@@ -637,7 +641,9 @@ static void effectWelcomeLoop(void)
   {
     for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
     {
-      //fadeToBlack(i, 10);
+      RgbwColor color = strip.GetPixelColor(i);
+      fadeToBlack(color, 2);
+      strip.SetPixelColor(i, color);
     }
   }
   else
@@ -668,64 +674,58 @@ static void welcomeSpark(void)
   //long r = random(0, 200);
   //if (r == 0) 
   long wNow = millis();
-  if (wNow - wLast > 1000)
+  if (wNow - wLast > random(50, 250))
   {
     wLast = wNow;
-    // draw a new big star random times
-    //long pixel = random(NUM_OF_LEDS-2);
-    long pixel = 6;
-    strip.SetPixelColor(pixel-1, blueWhiteDim);
-    strip.SetPixelColor(pixel, blueWhite);
-    strip.SetPixelColor(pixel+1, blueWhiteDim);
+
+    uint8_t randomNumOfStars = random(1, 5);
+    for (uint16_t i = 0; i < randomNumOfStars; i++)
+    {
+      // draw a new big star random times
+      long pixel = random(NUM_OF_LEDS-2);
+      strip.SetPixelColor(pixel-1, blueWhiteDim);
+      strip.SetPixelColor(pixel, blueWhite);
+      strip.SetPixelColor(pixel+1, blueWhiteDim);
+    }
   }
+  // start fading stars and sparks
   for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
   {
-    //fadeOut(i, 100);
     RgbwColor color = strip.GetPixelColor(i);
 
-    if (color.B > 20)
-    {
-      color.B -= 20;
-    }
-    else if (color.B > 0)
-    {
-      color.B--;
-    }
-
-    if (color.W > 20)
-    {
-      color.W -= 20;
-    }
-    else if (color.W > 0)
-    {
-      color.W--;
-    }
-
-    color.G = 0; // kill the sparks
+    fadeToBlack(color, 100);
     strip.SetPixelColor(i, color);
   }
   
-  uint8_t randomNumOfSparks = random(1, 40);
+  uint8_t randomNumOfSparks = random(1, 10);
   for (uint16_t i = 0; i < randomNumOfSparks; i++)
   {
     long t = random(NUM_OF_LEDS-1);
-    strip.SetPixelColor(t, RgbwColor(0,
-                          (uint8_t)((double)255 * intensity),
-                          0,
-                          0));
+    strip.SetPixelColor(t, RgbwColor(
+      0,
+      0,
+      (uint8_t)(random(1, wSparkBrightness)),
+      0));
   }
 }
 
 static void welcomeFadeToWhite(void)
 {
+    static uint16_t prevTime = 0;
+  if ((now - prevTime) > 50)
+  {
+    wWhiteValue = MIN(250, wWhiteValue + (wWhiteValue * 0.02));
+    prevTime = now;
+  }
+
   for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
   {
     RgbwColor color = strip.GetPixelColor(i);
-    color.R = MAX(wFadeToWhiteValue, color.R);
-    color.G = MAX(wFadeToWhiteValue, color.G);
-    color.B = MAX(wFadeToWhiteValue, color.B);
-    color.W = MAX(wFadeToWhiteValue, color.W);
-    strip.SetPixelColor(i, color);
+    color.R = MAX((uint8_t)wWhiteValue, color.R);
+    color.G = MAX((uint8_t)wWhiteValue, color.G);
+    color.B = MAX((uint8_t)wWhiteValue, color.B);
+    color.W = MAX((uint8_t)wWhiteValue, color.W);
+    strip.SetPixelColor(i, color);  
   }
 }
 
@@ -791,6 +791,31 @@ static void effectXmasLoop(void)
   }
 }
 
+static void effectFallingInit(void)
+{
+  sk6812Clear();
+}
+
+static void effectFallingLoop(void)
+{
+  RgbwColor color = RgbwColor(random(0, 255), random(0, 255), random(0,255), 0);
+  for (uint16_t i = 0; i < NUM_OF_LEDS_PER_SEGMENT; i++)
+  {
+      for (uint16_t segment = 0; segment < NUM_OF_SEGMENTS; segment++)
+      {
+          uint16_t pixel = i + segment*NUM_OF_LEDS_PER_SEGMENT;
+          strip.SetPixelColor(pixel, color);
+          
+          if (i > 0)
+          {
+            strip.SetPixelColor(pixel - 1, RgbwColor(0, 0, 0, 0));
+          }
+      }
+      strip.Show();
+    }
+}
+
+
 static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value)
 {
   RgbwColor color = strip.GetPixelColor(pixel);
@@ -799,25 +824,28 @@ static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint
   color.B = (color.B + targetColor.B) / 2;
 }
 
-static void fadeToBlack(const uint16_t pixel, const uint8_t value)
+static void fadeToWhite(RgbwColor& color, const uint8_t value, const uint8_t max)
 {
-  RgbwColor color = strip.GetPixelColor(pixel);
-  color.R = (color.R <= 20) ? 0 : (uint8_t)(color.R-(color.R*((float)value/256)));
-  color.G = (color.G <= 20) ? 0 : (uint8_t)(color.G-(color.G*((float)value/256)));
-  color.B = (color.B <= 20) ? 0 : (uint8_t)(color.B-(color.B*((float)value/256)));
-
-  if (pixel == 2)
-  {
-    Serial.printf("fade2w: %u %u %u \n", color.R, color.G, color.B);
-  }
+    double fadeFactor = (double)value / 256.0;
+    color.R = MIN(max, color.R + (MAX(1, color.R * fadeFactor)));
+    color.G = MIN(max, color.G + (MAX(1, color.G * fadeFactor)));
+    color.B = MIN(max, color.B + (MAX(1, color.B * fadeFactor)));
+    color.W = MIN(max, color.W + (MAX(1, color.W * fadeFactor)));
 }
 
-static void fadeToWhite(const uint16_t pixel, const uint8_t value)
+static void fadeToBlack(RgbwColor& color, const uint8_t value)
 {
-  RgbwColor color = strip.GetPixelColor(pixel);
-  color.R = MIN(255, MAX(color.R+(color.R*((float)value/256)), 0));
-  color.G = MIN(255, MAX(color.G+(color.G*((float)value/256)), 0));
-  color.B = MIN(255, MAX(color.B+(color.B*((float)value/256)), 0));
+    double fadeFactor = (double)value / 256.0;
+    color.R = MAX(0, color.R - (color.R * fadeFactor));
+    color.G = MAX(0, color.G - (color.G * fadeFactor));
+    color.B = MAX(0, color.B - (color.B * fadeFactor));
+    color.W = MAX(0, color.W - (color.W * fadeFactor));
+}
+
+static void handleWifiMqtt()
+{
+  ArduinoOTA.handle();
+  mqttHandle();
 }
 
 /****** Arduino framework callbacks *******/
@@ -826,7 +854,7 @@ void setup()
 {
   initBoard();
   initSk6812();
-  ledInit();
+  initLed();
   initWifi();
   initOta();
   initMqttClient();
@@ -835,8 +863,7 @@ void setup()
 void loop()
 {
   now = millis();
-  ArduinoOTA.handle();
-  mqttHandle();
+  handleWifiMqtt();
   
   if ((now - prev) > 1000)
   {
