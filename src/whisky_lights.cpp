@@ -191,7 +191,8 @@ static void setColor(uint8_t segment, uint16_t pixel, RgbwColor color);
 RgbwColor getColorInv(uint8_t segment, uint16_t pixel);
 static void setColorInv(uint8_t segment, uint16_t pixel, RgbwColor color);
 
-static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value);
+static void fadeToColor(RgbwColor& current, const RgbwColor target, const uint8_t value);
+static void fadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value);
 static void fadeToWhite(RgbwColor& color, const uint8_t value, const uint8_t max);
 static void fadeToBlack(RgbwColor& color, const uint8_t value);
 
@@ -1101,9 +1102,13 @@ static void effectSfIntroLoop(void)
 
   else if (sfState == 2)
   {
-
+    // todo
   }
 }
+
+
+RgbwColor discoTargetColor[NUM_OF_SEGMENTS][NUM_OF_BOXES];
+
 
 static void effectDiscoFloorInit(void)
 {
@@ -1114,6 +1119,8 @@ static void effectDiscoFloorInit(void)
     {
       Pair pair = discoFloorBoxes[segment][box];
       auto color = RgbwColor(random(0, 255), random(0, 255), random(0, 255), 0);
+      discoTargetColor[segment][box] = color;
+
       for (uint8_t i = pair.a; i < (pair.b + 1); i++)
       {
         setColor(segment, i, color);
@@ -1123,20 +1130,47 @@ static void effectDiscoFloorInit(void)
   }
 }
 
+long discoLastChangeColor = 0;
+long discoLastFadeUpdate = 0;
 
-uint8_t fadeBox = 0;
-
+/**
+ * brightness (1-255*1000ms) - controls how often one of the boxes (randomly) shall change color.
+ * white_value (1-255*100ms) - control how often each box which which has been selected with a new color shall be 
+ * updated (faded to new color). Each update change the color one step (total 255 steps in some color changes).
+ */
 static void effectDiscoFloorLoop(void)
 {
+  if ((now - discoLastChangeColor) > (ledContext.brightness * 1000))
+  {
+    discoLastChangeColor = now;
+    uint8_t box = random(0, NUM_OF_BOXES);
+    uint8_t segment = random(0, NUM_OF_SEGMENTS);
+    auto color = RgbwColor(random(0, 255), random(0, 255), random(0, 255), 0);
+    discoTargetColor[segment][box] = color;
+  }
+
+  bool doFadeUpdate = false;
+  if ((now - discoLastFadeUpdate) > (100 + (ledContext.whiteValue * 100)))
+  {
+    doFadeUpdate = true;
+    discoLastFadeUpdate = now;
+  }
   for (uint8_t segment = 0; segment < NUM_OF_SEGMENTS; segment += 2)
   {
     for (uint8_t box = 0; box < NUM_OF_BOXES; box++)
     {
       Pair pair = discoFloorBoxes[segment][box];
+      auto targetColor = discoTargetColor[segment][box];
       for (uint8_t i = pair.a; i < (pair.b + 1); i++)
       {
         auto color = getColor(segment, i);
-        color.W = ledContext.whiteValue;
+        //color.W = ledContext.whiteValue;
+
+        if (doFadeUpdate)
+        {
+          fadeToColor(color, targetColor, 1);
+        }
+
         setColor(segment, i, color);
         setColor(segment + 1, i, color);
       }
@@ -1169,7 +1203,23 @@ static void setColorInv(uint8_t segment, uint16_t pixel, RgbwColor color)
   strip.SetPixelColor(targetPixel, color);
 }
 
-static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value)
+static void fadeToColor(RgbwColor& current, const RgbwColor target, const uint8_t value)
+{
+  if (current.R != target.R)
+  {
+    current.R += (current.R > target.R) ? -(value) : (value);
+  }
+  if (current.G != target.G)
+  {
+    current.G += (current.G > target.G) ? -(value) : (value);
+  }
+  if (current.B != target.B)
+  {
+    current.B += (current.B > target.B) ? -(value) : (value);
+  }
+}
+
+static void fadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value)
 {
   RgbwColor color = strip.GetPixelColor(pixel);
   color.R = (color.R + targetColor.R) / 2;
