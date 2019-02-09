@@ -29,6 +29,10 @@ light:
       - Xmas
       - Welcome
       - Falling
+      - Fire
+      - MeteorRain
+      - SfIntro
+      - DiscoFloor
 
 
 HA < 0.84:
@@ -48,7 +52,10 @@ light:
       - Xmas
       - Welcome
       - Falling
-
+      - Fire
+      - MeteorRain
+      - SfIntro
+      - DiscoFloor
 
 */
 
@@ -63,15 +70,9 @@ light:
 #include <ArduinoOTA.h>
 
 /****** Defines *******/
-//#define STRIP2  1
-
-#ifdef STRIP2
-#define NUM_OF_LEDS                 115*4                     /*!< Must be 4 or more */
-#else
 #define NUM_OF_LEDS_PER_SEGMENT     114
-#define NUM_OF_SEGMENTS             7
+#define NUM_OF_SEGMENTS             8
 #define NUM_OF_LEDS                 (NUM_OF_LEDS_PER_SEGMENT * NUM_OF_SEGMENTS)
-#endif
 
 #define ON_BOARD_LED_BLINK_DELAY    2000                      /*!< Delay in ms between led toggle */
 
@@ -102,6 +103,8 @@ light:
 #define SIZE_OF(x)                  (sizeof(x) / sizeof(x[0]))
 #define MAX(a, b)                   ((a > b) ? (a) : (b))
 #define MIN(a, b)                   ((a < b) ? (a) : (b))
+#define ABS(x) (((x) <0 ) ? -(x) : (x))
+
 /****** Typedefs *******/
 
 typedef struct MqttContext_st
@@ -130,6 +133,12 @@ typedef struct Effect_st
   void (*InitFunc)(void);
   void (*LoopFunc)(void);
 } Effect;
+
+typedef struct
+{
+  uint8_t a;
+  uint8_t b;
+} Pair;
 
 /****** Static functions *******/
 
@@ -163,6 +172,25 @@ static void effectXmasLoop(void);
 static void effectFallingInit(void);
 static void effectFallingLoop(void);
 
+static void effectFireInit(void);
+static void effectFireLoop(void);
+
+static void effectMeteorRainInit(void);
+static void effectMeteorRainLoop(void);
+void meteorRain(uint8_t red, uint8_t green, uint8_t blue, uint8_t white, boolean randomDecay);
+
+static void effectSfIntroInit(void);
+static void effectSfIntroLoop(void);
+
+static void effectDiscoFloorInit(void);
+static void effectDiscoFloorLoop(void);
+
+
+RgbwColor getColor(uint8_t segment, uint16_t pixel);
+static void setColor(uint8_t segment, uint16_t pixel, RgbwColor color);
+RgbwColor getColorInv(uint8_t segment, uint16_t pixel);
+static void setColorInv(uint8_t segment, uint16_t pixel, RgbwColor color);
+
 static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value);
 static void fadeToWhite(RgbwColor& color, const uint8_t value, const uint8_t max);
 static void fadeToBlack(RgbwColor& color, const uint8_t value);
@@ -177,15 +205,90 @@ Effect effects[] =
   { "Welcome", &effectWelcomeInit, &effectWelcomeLoop },
   { "Xmas", &effectXmasInit, &effectXmasLoop},
   { "Falling", &effectFallingInit, &effectFallingLoop},
+  { "Fire", &effectFireInit, &effectFireLoop},
+  { "MeteorRain", &effectMeteorRainInit, &effectMeteorRainLoop},
+  { "SfIntro", &effectSfIntroInit, &effectSfIntroLoop},
+  { "DiscoFloor", &effectDiscoFloorInit, &effectDiscoFloorLoop},
 };
+
+
+#define NUM_OF_BOXES 6
+static const Pair discoFloorBoxes[NUM_OF_SEGMENTS][NUM_OF_BOXES] {
+  {
+    {1, 18},
+    {21, 37},
+    {41, 56},
+    {59, 75},
+    {79, 94},
+    {98, 114}
+  },
+  {
+    {1, 18},
+    {21, 37},
+    {41, 56},
+    {59, 75},
+    {79, 94},
+    {98, 114}
+  },
+
+  {
+    {1, 18},
+    {21, 37},
+    {41, 56},
+    {59, 77},
+    {80, 93},
+    {97, 114}
+  },
+  {
+    {1, 18},
+    {21, 37},
+    {41, 56},
+    {59, 77},
+    {80, 93},
+    {97, 114}
+  },
+
+  {
+    {1, 18},
+    {21, 37},
+    {41, 56},
+    {59, 77},
+    {80, 93},
+    {97, 114}
+  },
+  {
+    {1, 18},
+    {21, 37},
+    {41, 56},
+    {59, 77},
+    {80, 93},
+    {97, 114}
+  },
+
+  {
+    {1, 20},
+    {23, 35},
+    {39, 56},
+    {59, 72},
+    {75, 91},
+    {95, 114}
+  },
+  {
+    {1, 20},
+    {23, 35},
+    {39, 56},
+    {59, 72},
+    {75, 91},
+    {95, 114}
+  }  
+};
+
 
 /* Pixelpin is ignored on ESP8266 with NeoEsp8266Dma800KbpsMethod. Connect to D4 on Wemos mini */
 NeoPixelBus<NeoGrbwFeature, NeoEsp8266Dma800KbpsMethod> strip(NUM_OF_LEDS, 0); 
 
 /* Pixelpin is ignored on ESP8266 with NeoEsp8266AsyncUart1800KbpsMethod. Connect to RX on Wemos mini */
-#ifdef STRIP2
-NeoPixelBus<NeoGrbwFeature, NeoEsp8266AsyncUart1800KbpsMethod> strip2(NUM_OF_LEDS, 2); 
-#endif
+//NeoPixelBus<NeoGrbwFeature, NeoEsp8266AsyncUart1800KbpsMethod> strip2(NUM_OF_LEDS, 2); 
 
 LedContext ledContext;
 
@@ -501,12 +604,6 @@ static void initSk6812(void)
 {
   strip.Begin();
   strip.Show();
-
-#ifdef STRIP2
-  strip2.Begin();
-  strip2.Show();
-#endif
-
   sk6812Clear();
 }
 
@@ -514,11 +611,6 @@ static void sk6812Clear()
 {
   strip.ClearTo(RgbwColor(0, 0, 0, 0));
   strip.Show();
-
-#ifdef STRIP2
-  strip2.ClearTo(RgbwColor(0, 0, 0, 0));
-  strip2.Show();
-#endif
 }
 
 static void initLed()
@@ -573,26 +665,6 @@ static void effectSolidLoop(void)
                           b,
                           ledContext.whiteValue));
 
-/*
-  for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
-  {
-    strip.SetPixelColor(i, RgbwColor(r,
-                          g,
-                          b,
-                          ledContext.whiteValue));
-  }
-  long t = random(NUM_OF_LEDS-1);
-  strip.SetPixelColor(t, RgbwColor(0,
-                        255,
-                        0,
-                        0));
-*/
-#ifdef STRIP2
-  strip2.ClearTo(RgbwColor(r,
-                           g,
-                           b,
-                           ledContext.whiteValue));
-#endif                           
 }
 
 double wSparkBrightness;
@@ -798,23 +870,304 @@ static void effectFallingInit(void)
 
 static void effectFallingLoop(void)
 {
-  RgbwColor color = RgbwColor(random(0, 255), random(0, 255), random(0,255), 0);
-  for (uint16_t i = 0; i < NUM_OF_LEDS_PER_SEGMENT; i++)
+  for (uint16_t segment = 0; segment < NUM_OF_SEGMENTS; segment++)
   {
-      for (uint16_t segment = 0; segment < NUM_OF_SEGMENTS; segment++)
+    RgbwColor color = RgbwColor(random(0, 255), random(0, 255), random(0,255), 0);
+    for (uint16_t i = 0; i < NUM_OF_LEDS_PER_SEGMENT; i++)
+    {
+      setColor(segment, i, color);
+      if (i > 0)
       {
-          uint16_t pixel = i + segment*NUM_OF_LEDS_PER_SEGMENT;
-          strip.SetPixelColor(pixel, color);
-          
-          if (i > 0)
-          {
-            strip.SetPixelColor(pixel - 1, RgbwColor(0, 0, 0, 0));
-          }
+        setColor(segment, i - 1, RgbwColor(0, 0, 0, 0));
       }
-      strip.Show();
+      else if (i == 0)
+      {
+        //setColor(segment, NUM_OF_LEDS_PER_SEGMENT - 1, RgbwColor(0, 0, 0, 0));
+      }
     }
+  }
+  strip.Show();
 }
 
+static void effectFireInit(void)
+{
+  sk6812Clear();
+}
+
+static void effectFireLoop(void)
+{
+  uint8_t cooling = 55;
+  uint8_t sparking = 120;
+
+  static uint8_t heat[NUM_OF_SEGMENTS][NUM_OF_LEDS_PER_SEGMENT];
+  uint16_t cooldown;
+  
+  for (uint8_t segment = 0; segment < NUM_OF_SEGMENTS; segment++)
+  {
+
+    // Step 1.  Cool down every cell a little
+    for (uint16_t i = 0; i < NUM_OF_LEDS_PER_SEGMENT; i++) 
+    {
+      cooldown = random(0, ((cooling * 10) / NUM_OF_LEDS_PER_SEGMENT) + 2);
+      
+      if (cooldown > heat[segment][i]) 
+      {
+        heat[segment][i] = 0;
+      } 
+      else 
+      {
+        heat[segment][i] = heat[segment][i] - cooldown;
+      }
+    }
+    
+    // Step 2.  Heat from each cell drifts 'up' and diffuses a little
+    for (int k = NUM_OF_LEDS_PER_SEGMENT - 1; k >= 2; k--) 
+    {
+      heat[segment][k] = (heat[segment][k - 1] + heat[segment][k - 2] + heat[segment][k - 2]) / 3;
+    }
+
+    // Step 3.  Randomly ignite new 'sparks' near the bottom
+    if (random(255) < sparking ) 
+    {
+      int y = random(7);
+      heat[segment][y] = heat[segment][y] + random(160,255);
+      //heat[y] = random(160,255);
+    }
+
+    // Step 4.  Convert heat to LED colors
+    for (uint16_t pixel = 0; pixel < NUM_OF_LEDS_PER_SEGMENT; pixel++) 
+    {
+      //setPixelHeatColor(pixel, heat[pixel] );
+      byte temperature = heat[segment][pixel];
+      // Scale 'heat' down from 0-255 to 0-191
+      byte t192 = round((temperature/255.0)*191);
+    
+      // calculate ramp up from
+      uint8_t heatramp = t192 & 0x3F; // 0..63
+      heatramp <<= 2; // scale up to 0..252
+    
+      // figure out which third of the spectrum we're in:
+      if (t192 > 0x80) // hottest
+      {
+        setColorInv(segment, pixel, RgbwColor(255, 255, heatramp, 0));
+      }
+      else if (t192 > 0x40) // middle
+      {
+        setColorInv(segment, pixel, RgbwColor(255, heatramp, 0, 0));
+      }
+      else // coolest
+      {
+        setColorInv(segment, pixel, RgbwColor(heatramp, 0, 0, 0));
+      }
+    }
+  }
+}
+
+
+typedef struct
+{
+  float position;
+  uint8_t size;
+  uint8_t trailDecayRate;
+  bool randomDecay;
+  float speedFactor;
+} Meteor;
+
+Meteor meteors[NUM_OF_SEGMENTS];
+
+static void effectMeteorRainInit(void)
+{
+  sk6812Clear();
+  // start all meteorites at random initial positions
+  for (uint8_t segment = 0; segment < NUM_OF_SEGMENTS; segment++)
+  {
+    meteors[segment].position = random(0, NUM_OF_LEDS_PER_SEGMENT);
+    meteors[segment].size = random(3, 10);
+    meteors[segment].trailDecayRate = random(8, 64);
+    meteors[segment].speedFactor = random(1, 3);
+  }
+}
+
+static void effectMeteorRainLoop(void)
+{
+  double intensity = (double)((double)ledContext.brightness / (double)255);
+  const uint8_t r = (int)((double)ledContext.colorR * intensity);
+  const uint8_t g = (int)((double)ledContext.colorG * intensity);
+  const uint8_t b = (int)((double)ledContext.colorB * intensity);
+  meteorRain(r, g, b, ledContext.whiteValue, true);
+}
+
+void meteorRain(uint8_t red, uint8_t green, uint8_t blue, uint8_t white, boolean randomDecay)
+{
+  uint16_t i;
+
+  for (uint8_t segment = 0; segment < NUM_OF_SEGMENTS; segment++)
+  {
+    if (meteors[segment].position > NUM_OF_LEDS_PER_SEGMENT)
+    {
+      meteors[segment].position = 0.0f;
+      meteors[segment].size = random(5, 10); // 10
+      meteors[segment].trailDecayRate = random(50, 80); // 64
+      meteors[segment].speedFactor = (float)random(5, 20) / 10.0; // 1
+    }
+    i = (uint8_t)meteors[segment].position;
+
+    // brightness decay
+    for (uint16_t j = 0; j < NUM_OF_LEDS_PER_SEGMENT; j++) 
+    {
+      if ((!randomDecay) || (random(10)>5)) 
+      {
+        auto color = getColor(segment, j);
+        fadeToBlack(color, meteors[segment].trailDecayRate);
+        setColor(segment, j, color);
+      }
+    }
+    
+    // draw meteor
+    for(uint16_t j = 0; j < meteors[segment].size; j++) 
+    {
+      if ( ((i - j) < NUM_OF_LEDS_PER_SEGMENT) && ((i - j) >= 0) )
+      {
+        setColor(segment, (i - j), RgbwColor(red, green, blue, white));
+      } 
+    }
+
+    meteors[segment].position += 1*meteors[segment].speedFactor;
+  }
+}
+
+
+uint8_t sfState = 0;
+uint8_t sfHeight = 0;
+float sfX = 0;
+static const float sfperiodOffsets[NUM_OF_SEGMENTS] = 
+{ 
+    PI,         // 0
+    PI*5/6,     // 1
+    PI*4/6,     // 2
+    PI*3/6,     // 3
+    PI*3/6,     // 4
+    PI*4/6,     // 5
+    PI*5/6,     // 6
+    PI          // 7
+};
+
+static void effectSfIntroInit(void)
+{
+  sk6812Clear();
+  sfState = 0;
+  sfHeight = 0;
+  sfX = 0;
+}
+
+static void effectSfIntroLoop(void)
+{
+  if (sfState == 0)
+  {
+
+    for (uint8_t i = 0; i < sfHeight; i++)
+    {
+      setColorInv(0, i, RgbwColor(0, 10, 150, 0));
+    }
+    setColorInv(0, sfHeight, RgbwColor(0, 150, 255, 100));
+
+    sfHeight++;
+    if (sfHeight >= (NUM_OF_LEDS_PER_SEGMENT - 1))
+    {
+      sfState = 1;
+    }
+  }
+  else if (sfState == 1)
+  {
+    for (uint8_t segment = 0; segment < NUM_OF_SEGMENTS; segment++)
+    {
+      uint8_t amplitude = 100;
+      if (segment == 3 || segment == 4)
+      {
+        amplitude = 255;
+      }
+
+      float brightnessG = ABS((sin(sfperiodOffsets[segment] + sfX)*(amplitude/4)));
+      float brightnessB = ABS((sin(sfperiodOffsets[segment] + sfX)*amplitude));
+      auto color = RgbwColor(0, (uint8_t)brightnessG, (uint8_t)brightnessB, 0);
+      for (uint16_t i = 0; i < NUM_OF_LEDS_PER_SEGMENT; i++)
+      {
+        setColor(segment, i, color);
+      }
+    }
+
+    sfX += 0.05;
+  }
+
+  else if (sfState == 2)
+  {
+
+  }
+}
+
+static void effectDiscoFloorInit(void)
+{
+  sk6812Clear();
+  for (uint8_t segment = 0; segment < NUM_OF_SEGMENTS; segment += 2)
+  {
+    for (uint8_t box = 0; box < NUM_OF_BOXES; box++)
+    {
+      Pair pair = discoFloorBoxes[segment][box];
+      auto color = RgbwColor(random(0, 255), random(0, 255), random(0, 255), 0);
+      for (uint8_t i = pair.a; i < (pair.b + 1); i++)
+      {
+        setColor(segment, i, color);
+        setColor(segment + 1, i, color);
+      }
+    }
+  }
+}
+
+
+uint8_t fadeBox = 0;
+
+static void effectDiscoFloorLoop(void)
+{
+  for (uint8_t segment = 0; segment < NUM_OF_SEGMENTS; segment += 2)
+  {
+    for (uint8_t box = 0; box < NUM_OF_BOXES; box++)
+    {
+      Pair pair = discoFloorBoxes[segment][box];
+      for (uint8_t i = pair.a; i < (pair.b + 1); i++)
+      {
+        auto color = getColor(segment, i);
+        color.W = ledContext.whiteValue;
+        setColor(segment, i, color);
+        setColor(segment + 1, i, color);
+      }
+    }
+  }
+}
+
+
+RgbwColor getColor(uint8_t segment, uint16_t pixel)
+{
+  const uint16_t targetPixel = segment * NUM_OF_LEDS_PER_SEGMENT + pixel;
+  return strip.GetPixelColor(targetPixel);
+}
+
+static void setColor(uint8_t segment, uint16_t pixel, RgbwColor color)
+{
+  const uint16_t targetPixel = segment * NUM_OF_LEDS_PER_SEGMENT + pixel;
+  strip.SetPixelColor(targetPixel, color);
+}
+
+RgbwColor getColorInv(uint8_t segment, uint16_t pixel)
+{
+  const uint16_t targetPixel = (segment * NUM_OF_LEDS_PER_SEGMENT) + NUM_OF_LEDS_PER_SEGMENT - 1 - pixel;
+  return strip.GetPixelColor(targetPixel);
+}
+
+static void setColorInv(uint8_t segment, uint16_t pixel, RgbwColor color)
+{
+  const uint16_t targetPixel = (segment * NUM_OF_LEDS_PER_SEGMENT) + NUM_OF_LEDS_PER_SEGMENT - 1 - pixel;
+  strip.SetPixelColor(targetPixel, color);
+}
 
 static void FadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value)
 {
