@@ -33,6 +33,7 @@ light:
       - MeteorRain
       - SfIntro
       - DiscoFloor
+      - DiscoFloorDistinct
 
 
 HA < 0.84:
@@ -56,6 +57,7 @@ light:
       - MeteorRain
       - SfIntro
       - DiscoFloor
+      - DiscoFloorDistinct
 
 */
 
@@ -103,7 +105,7 @@ light:
 #define SIZE_OF(x)                  (sizeof(x) / sizeof(x[0]))
 #define MAX(a, b)                   ((a > b) ? (a) : (b))
 #define MIN(a, b)                   ((a < b) ? (a) : (b))
-#define ABS(x) (((x) <0 ) ? -(x) : (x))
+#define ABS(x)                      (((x) < 0 ) ? -(x) : (x))
 
 /****** Typedefs *******/
 
@@ -182,10 +184,12 @@ void meteorRain(uint8_t red, uint8_t green, uint8_t blue, uint8_t white, boolean
 static void effectSfIntroInit(void);
 static void effectSfIntroLoop(void);
 
+static void effectDiscoFloorNoDistinctInit(void);
+static void effectDiscoFloorDistinctInit(void);
 static void effectDiscoFloorInit(void);
 static void effectDiscoFloorLoop(void);
 
-
+/* Helper functions */
 RgbwColor getColor(uint8_t segment, uint16_t pixel);
 static void setColor(uint8_t segment, uint16_t pixel, RgbwColor color);
 RgbwColor getColorInv(uint8_t segment, uint16_t pixel);
@@ -195,6 +199,7 @@ static void fadeToColor(RgbwColor& current, const RgbwColor target, const uint8_
 static void fadeTo(const uint16_t pixel, const RgbwColor targetColor, const uint8_t value);
 static void fadeToWhite(RgbwColor& color, const uint8_t value, const uint8_t max);
 static void fadeToBlack(RgbwColor& color, const uint8_t value);
+static RgbwColor rgbColorPicker(bool distinct);
 
 static void handleWifiMqtt();
 
@@ -202,14 +207,15 @@ static void handleWifiMqtt();
 
 Effect effects[] = 
 {
-  { "Solid", NULL, &effectSolidLoop },
-  { "Welcome", &effectWelcomeInit, &effectWelcomeLoop },
-  { "Xmas", &effectXmasInit, &effectXmasLoop},
-  { "Falling", &effectFallingInit, &effectFallingLoop},
-  { "Fire", &effectFireInit, &effectFireLoop},
-  { "MeteorRain", &effectMeteorRainInit, &effectMeteorRainLoop},
-  { "SfIntro", &effectSfIntroInit, &effectSfIntroLoop},
-  { "DiscoFloor", &effectDiscoFloorInit, &effectDiscoFloorLoop},
+  { "Solid",              NULL,                             &effectSolidLoop },
+  { "Welcome",            &effectWelcomeInit,               &effectWelcomeLoop },
+  { "Xmas",               &effectXmasInit,                  &effectXmasLoop},
+  { "Falling",            &effectFallingInit,               &effectFallingLoop},
+  { "Fire",               &effectFireInit,                  &effectFireLoop},
+  { "MeteorRain",         &effectMeteorRainInit,            &effectMeteorRainLoop},
+  { "SfIntro",            &effectSfIntroInit,               &effectSfIntroLoop},
+  { "DiscoFloor",         &effectDiscoFloorNoDistinctInit,  &effectDiscoFloorLoop},
+  { "DiscoFloorDistinct", &effectDiscoFloorDistinctInit,    &effectDiscoFloorLoop},
 };
 
 
@@ -659,7 +665,6 @@ static void effectSolidLoop(void)
   r = (int)((double)r * intensity);
   g = (int)((double)g * intensity);
   b = (int)((double)b * intensity);
-  //delay(100);
 
   strip.ClearTo(RgbwColor(r,
                           g,
@@ -864,30 +869,35 @@ static void effectXmasLoop(void)
   }
 }
 
+
+/*** Falling globals ***/
+uint8_t fallingPos = 0;
+RgbwColor fallingColors[NUM_OF_SEGMENTS];
+
 static void effectFallingInit(void)
 {
   sk6812Clear();
+  fallingPos = 0;
 }
 
 static void effectFallingLoop(void)
 {
   for (uint16_t segment = 0; segment < NUM_OF_SEGMENTS; segment++)
   {
-    RgbwColor color = RgbwColor(random(0, 255), random(0, 255), random(0,255), 0);
-    for (uint16_t i = 0; i < NUM_OF_LEDS_PER_SEGMENT; i++)
+    if (fallingPos > 0)
     {
-      setColor(segment, i, color);
-      if (i > 0)
-      {
-        setColor(segment, i - 1, RgbwColor(0, 0, 0, 0));
-      }
-      else if (i == 0)
-      {
-        //setColor(segment, NUM_OF_LEDS_PER_SEGMENT - 1, RgbwColor(0, 0, 0, 0));
-      }
+      setColor(segment, fallingPos - 1, RgbwColor(0, 0, 0, 0));
     }
+    else if (fallingPos == 0)
+    {
+      setColor(segment, NUM_OF_LEDS_PER_SEGMENT - 1, RgbwColor(0, 0, 0, 0));
+      fallingColors[segment] = rgbColorPicker(true);
+    }
+    
+    setColor(segment, fallingPos, fallingColors[segment]);
+
   }
-  strip.Show();
+  fallingPos = (fallingPos + 1) % NUM_OF_LEDS_PER_SEGMENT;
 }
 
 static void effectFireInit(void)
@@ -906,7 +916,7 @@ static void effectFireLoop(void)
   for (uint8_t segment = 0; segment < NUM_OF_SEGMENTS; segment++)
   {
 
-    // Step 1.  Cool down every cell a little
+    // Cool down every cell a little
     for (uint16_t i = 0; i < NUM_OF_LEDS_PER_SEGMENT; i++) 
     {
       cooldown = random(0, ((cooling * 10) / NUM_OF_LEDS_PER_SEGMENT) + 2);
@@ -921,24 +931,22 @@ static void effectFireLoop(void)
       }
     }
     
-    // Step 2.  Heat from each cell drifts 'up' and diffuses a little
+    // Heat from each cell drifts 'up' and diffuses a little
     for (int k = NUM_OF_LEDS_PER_SEGMENT - 1; k >= 2; k--) 
     {
       heat[segment][k] = (heat[segment][k - 1] + heat[segment][k - 2] + heat[segment][k - 2]) / 3;
     }
 
-    // Step 3.  Randomly ignite new 'sparks' near the bottom
+    // Randomly ignite new 'sparks' near the bottom
     if (random(255) < sparking ) 
     {
       int y = random(7);
       heat[segment][y] = heat[segment][y] + random(160,255);
-      //heat[y] = random(160,255);
     }
 
-    // Step 4.  Convert heat to LED colors
+    // Convert heat to LED colors
     for (uint16_t pixel = 0; pixel < NUM_OF_LEDS_PER_SEGMENT; pixel++) 
     {
-      //setPixelHeatColor(pixel, heat[pixel] );
       byte temperature = heat[segment][pixel];
       // Scale 'heat' down from 0-255 to 0-191
       byte t192 = round((temperature/255.0)*191);
@@ -964,7 +972,7 @@ static void effectFireLoop(void)
   }
 }
 
-
+/*** MeteorRain globals ***/
 typedef struct
 {
   float position;
@@ -1037,7 +1045,7 @@ void meteorRain(uint8_t red, uint8_t green, uint8_t blue, uint8_t white, boolean
   }
 }
 
-
+/*** SfIntro globals ***/
 uint8_t sfState = 0;
 uint8_t sfHeight = 0;
 float sfX = 0;
@@ -1106,9 +1114,23 @@ static void effectSfIntroLoop(void)
   }
 }
 
-
+/*** Disco globals ***/
 RgbwColor discoTargetColor[NUM_OF_SEGMENTS][NUM_OF_BOXES];
+long discoLastChangeColor = 0;
+long discoLastFadeUpdate = 0;
+bool discoDistinct = false;
 
+static void effectDiscoFloorNoDistinctInit(void)
+{
+  discoDistinct = false;
+  effectDiscoFloorInit();
+}
+
+static void effectDiscoFloorDistinctInit(void)
+{
+  discoDistinct = true;
+  effectDiscoFloorInit();
+}
 
 static void effectDiscoFloorInit(void)
 {
@@ -1118,7 +1140,7 @@ static void effectDiscoFloorInit(void)
     for (uint8_t box = 0; box < NUM_OF_BOXES; box++)
     {
       Pair pair = discoFloorBoxes[segment][box];
-      auto color = RgbwColor(random(0, 255), random(0, 255), random(0, 255), 0);
+      auto color = rgbColorPicker(discoDistinct);
       discoTargetColor[segment][box] = color;
 
       for (uint8_t i = pair.a; i < (pair.b + 1); i++)
@@ -1129,9 +1151,6 @@ static void effectDiscoFloorInit(void)
     }
   }
 }
-
-long discoLastChangeColor = 0;
-long discoLastFadeUpdate = 0;
 
 /**
  * brightness (1-255*1000ms) - controls how often one of the boxes (randomly) shall change color.
@@ -1145,7 +1164,7 @@ static void effectDiscoFloorLoop(void)
     discoLastChangeColor = now;
     uint8_t box = random(0, NUM_OF_BOXES);
     uint8_t segment = random(0, NUM_OF_SEGMENTS);
-    auto color = RgbwColor(random(0, 255), random(0, 255), random(0, 255), 0);
+    auto color = rgbColorPicker(discoDistinct);
     discoTargetColor[segment][box] = color;
   }
 
@@ -1164,7 +1183,6 @@ static void effectDiscoFloorLoop(void)
       for (uint8_t i = pair.a; i < (pair.b + 1); i++)
       {
         auto color = getColor(segment, i);
-        //color.W = ledContext.whiteValue;
 
         if (doFadeUpdate)
         {
@@ -1243,6 +1261,36 @@ static void fadeToBlack(RgbwColor& color, const uint8_t value)
     color.G = MAX(0, color.G - (color.G * fadeFactor));
     color.B = MAX(0, color.B - (color.B * fadeFactor));
     color.W = MAX(0, color.W - (color.W * fadeFactor));
+}
+
+static RgbwColor rgbColorPicker(bool distinct)
+{
+  if (distinct)
+  {
+    uint8_t pos[3] = { 0xFF, 0xFF, 0xFF };
+    for (uint8_t i = 0; i < 3; i++)
+    {
+      bool found = false;
+      while (!found)
+      {
+        uint8_t r = rand() % 3;
+        if (pos[0] != r && pos[1] != r && pos[2] != r)
+        {
+          pos[i] = r;
+          found = true;
+        }
+      }
+    }
+    uint8_t color[3] = {0};
+    color[pos[0]] = random(0, 255);
+    color[pos[1]] = 0;
+    color[pos[2]] = 255;
+    return RgbwColor(color[0], color[1], color[2], 0);
+  }
+  else
+  {
+    return RgbwColor(random(255), random(255), random(255), 0);
+  }
 }
 
 static void handleWifiMqtt()
