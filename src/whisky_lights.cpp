@@ -1187,7 +1187,7 @@ static void effectDiscoFloorLoop(void)
     {
       Pair pair = discoFloorBoxes[segment][box];
       auto targetColor = discoTargetColor[segment][box];
-      for (uint8_t i = pair.a; i < (pair.b + 1); i++)
+      for (uint8_t i = pair.a; i <= (pair.b); i++)
       {
         auto color = getColor(segment, i);
 
@@ -1219,23 +1219,32 @@ static void effectRainbowInit(void)
   RainbowPos = 2;
   RainbowValue = 0;
   RainbowDir = UP;
+  for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
+  {
+    effectRainbowLoop();
+  }
 }
 
 static void effectRainbowLoop(void)
 {
+  double intensity = (double)((double)ledContext.brightness / (double)255);
   RainbowColors[RainbowPos] = (RainbowDir == UP) ? (++RainbowValue) : (--RainbowValue);
-  if (RainbowDir == UP && RainbowValue == 255)
+  if ((RainbowDir == UP) && (RainbowValue == 255))
   {
     RainbowDir = DOWN;
     RainbowPos = (RainbowPos + 1) % 3;
   }
-  else if (RainbowDir == DOWN && RainbowValue == 0)
+  else if ((RainbowDir == DOWN) && (RainbowValue == 0))
   {
     RainbowDir = UP;
     RainbowPos = (RainbowPos + 1) % 3;
   }
   strip.RotateRight(1);
-  strip.SetPixelColor(0, RgbwColor(RainbowColors[0], RainbowColors[1], RainbowColors[2], 0));
+  strip.SetPixelColor(0, RgbwColor(
+    RainbowColors[0] * intensity, 
+    RainbowColors[1] * intensity, 
+    RainbowColors[2] * intensity, 
+    ledContext.whiteValue));
 }
 
 /*** Helper functions ***/
