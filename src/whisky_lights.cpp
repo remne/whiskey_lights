@@ -34,6 +34,7 @@ light:
       - SfIntro
       - DiscoFloor
       - DiscoFloorDistinct
+      - Rainbow
 
 
 HA < 0.84:
@@ -58,6 +59,7 @@ light:
       - SfIntro
       - DiscoFloor
       - DiscoFloorDistinct
+      - Rainbow
 
 */
 
@@ -189,6 +191,9 @@ static void effectDiscoFloorDistinctInit(void);
 static void effectDiscoFloorInit(void);
 static void effectDiscoFloorLoop(void);
 
+static void effectRainbowInit(void);
+static void effectRainbowLoop(void);
+
 /* Helper functions */
 RgbwColor getColor(uint8_t segment, uint16_t pixel);
 static void setColor(uint8_t segment, uint16_t pixel, RgbwColor color);
@@ -216,6 +221,8 @@ Effect effects[] =
   { "SfIntro",            &effectSfIntroInit,               &effectSfIntroLoop},
   { "DiscoFloor",         &effectDiscoFloorNoDistinctInit,  &effectDiscoFloorLoop},
   { "DiscoFloorDistinct", &effectDiscoFloorDistinctInit,    &effectDiscoFloorLoop},
+  { "Rainbow",            &effectRainbowInit,               &effectRainbowLoop},
+  
 };
 
 
@@ -1196,6 +1203,42 @@ static void effectDiscoFloorLoop(void)
   }
 }
 
+/*** Rainbow globals ***/
+#define UP      1
+#define DOWN    0
+uint8_t RainbowPos = 2;
+uint8_t RainbowValue = 0;
+uint8_t RainbowDir = UP;
+uint8_t RainbowColors[3] = { 255, 0, 0 };
+
+static void effectRainbowInit(void)
+{
+  RainbowColors[0] = 255;
+  RainbowColors[1] = 0;
+  RainbowColors[2] = 0;
+  RainbowPos = 2;
+  RainbowValue = 0;
+  RainbowDir = UP;
+}
+
+static void effectRainbowLoop(void)
+{
+  RainbowColors[RainbowPos] = (RainbowDir == UP) ? (++RainbowValue) : (--RainbowValue);
+  if (RainbowDir == UP && RainbowValue == 255)
+  {
+    RainbowDir = DOWN;
+    RainbowPos = (RainbowPos + 1) % 3;
+  }
+  else if (RainbowDir == DOWN && RainbowValue == 0)
+  {
+    RainbowDir = UP;
+    RainbowPos = (RainbowPos + 1) % 3;
+  }
+  strip.RotateRight(1);
+  strip.SetPixelColor(0, RgbwColor(RainbowColors[0], RainbowColors[1], RainbowColors[2], 0));
+}
+
+/*** Helper functions ***/
 
 RgbwColor getColor(uint8_t segment, uint16_t pixel)
 {
