@@ -21,6 +21,7 @@ light:
     brightness: true
     rgb: true
     white_value: true
+    color_temp: true
     qos: 0
     optimistic: false
     effect: true
@@ -46,6 +47,7 @@ light:
     brightness: true
     rgb: true
     white_value: true
+    color_temp: true
     qos: 0
     optimistic: false
     effect: true
@@ -120,6 +122,8 @@ typedef struct LedContext_st
 {
   uint8_t state;
   uint8_t whiteValue;
+  float colorTemp;
+  uint16_t colorTempRaw;
   uint8_t brightness;
   uint8_t colorR;
   uint8_t colorG;
@@ -517,6 +521,8 @@ static bool mqttParsePayload(const char *jsonData)
         ledContext.colorG = 255;
         ledContext.colorB = 255;
         ledContext.whiteValue = 0;
+        ledContext.colorTemp = 0.0f;
+        ledContext.colorTempRaw = 153;
         ledContext.brightness = 1; // Brightness range is 1-100 in HA for some reason.
       }
       ledContext.state = LED_STATE_ON;
@@ -544,6 +550,13 @@ static bool mqttParsePayload(const char *jsonData)
   if (jsonObj.containsKey("white_value"))
   {
     ledContext.whiteValue = jsonObj["white_value"];
+  }
+
+  if (jsonObj.containsKey("color_temp"))
+  {
+    ledContext.colorTempRaw = jsonObj["color_temp"]; // range between 153-500
+    uint16_t temp = ledContext.colorTempRaw - 153; // offset value from 153-500 -> 0-346
+    ledContext.colorTemp = (float)(temp / 346.0f); // convert to 0.0-1.0f
   }
 
   if (jsonObj.containsKey("effect"))
@@ -586,6 +599,7 @@ static void mqttSendResponse(void)
   jsonObj["brightness"] = ledContext.brightness;
   jsonObj["state"] = ((ledContext.state == LED_STATE_ON) ? "ON" : "OFF");
   jsonObj["white_value"] = ledContext.whiteValue;
+  jsonObj["color_temp"] = ledContext.colorTempRaw;
   if (ledContext.nextEffect != LED_INVALID_EFFECT)
   {
     jsonObj["effect"] = effects[ledContext.nextEffect].effect;
@@ -673,11 +687,13 @@ static void effectSolidLoop(void)
   g = (int)((double)g * intensity);
   b = (int)((double)b * intensity);
 
-  strip.ClearTo(RgbwColor(r,
+  for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
+  {
+    strip.SetPixelColor(i, RgbwColor(r,
                           g,
                           b,
                           ledContext.whiteValue));
-
+  }
 }
 
 double wSparkBrightness;
@@ -915,7 +931,7 @@ static void effectFireInit(void)
 static void effectFireLoop(void)
 {
   uint8_t cooling = 55;
-  uint8_t sparking = 120;
+  uint8_t sparking = (uint8_t)((float)120 * ledContext.colorTemp);
 
   static uint8_t heat[NUM_OF_SEGMENTS][NUM_OF_LEDS_PER_SEGMENT];
   uint16_t cooldown;
@@ -976,6 +992,25 @@ static void effectFireLoop(void)
         setColorInv(segment, pixel, RgbwColor(heatramp, 0, 0, 0));
       }
     }
+  }
+
+  // set background light
+  double intensity = (double)((double)(ledContext.brightness-1) / (double)255);
+  uint8_t r = ledContext.colorR;
+  uint8_t g = ledContext.colorG;
+  uint8_t b = ledContext.colorB;
+  r = (int)((double)r * intensity);
+  g = (int)((double)g * intensity);
+  b = (int)((double)b * intensity);
+
+  for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
+  {
+    RgbwColor color = strip.GetPixelColor(i);
+    color.R = MAX(color.R, r);
+    color.G = MAX(color.G, g);
+    color.B = MAX(color.B, b);
+    color.W = ledContext.whiteValue;
+    strip.SetPixelColor(i, color);
   }
 }
 
@@ -1150,7 +1185,7 @@ static void effectDiscoFloorInit(void)
       auto color = rgbColorPicker(discoDistinct);
       discoTargetColor[segment][box] = color;
 
-      for (uint8_t i = pair.a; i < (pair.b + 1); i++)
+      for (uint8_t i = pair.a; i <= (pair.b); i++)
       {
         setColor(segment, i, color);
         setColor(segment + 1, i, color);
