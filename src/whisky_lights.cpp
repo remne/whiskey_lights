@@ -36,6 +36,7 @@ light:
       - DiscoFloor
       - DiscoFloorDistinct
       - Rainbow
+      - Running
 
 
 HA < 0.84:
@@ -62,8 +63,11 @@ light:
       - DiscoFloor
       - DiscoFloorDistinct
       - Rainbow
+      - Running
 
 */
+
+#define MQTT_MAX_PACKET_SIZE 128+40   // takes only effect with PlatformIO.
 
 #include <PubSubClient.h>
 #include <NeoPixelAnimator.h>
@@ -198,7 +202,12 @@ static void effectDiscoFloorLoop(void);
 static void effectRainbowInit(void);
 static void effectRainbowLoop(void);
 
+static void effectRunningInit(void);
+static void effectRunningLoop(void);
+static void effectRunningSetPixelColor(void);
+
 /* Helper functions */
+static void addAmbientBacklightColor(void);
 RgbwColor getColor(uint8_t segment, uint16_t pixel);
 static void setColor(uint8_t segment, uint16_t pixel, RgbwColor color);
 RgbwColor getColorInv(uint8_t segment, uint16_t pixel);
@@ -226,7 +235,7 @@ Effect effects[] =
   { "DiscoFloor",         &effectDiscoFloorNoDistinctInit,  &effectDiscoFloorLoop},
   { "DiscoFloorDistinct", &effectDiscoFloorDistinctInit,    &effectDiscoFloorLoop},
   { "Rainbow",            &effectRainbowInit,               &effectRainbowLoop},
-  
+  { "Running",            &effectRunningInit,               &effectRunningLoop},
 };
 
 
@@ -595,11 +604,10 @@ static void mqttSendResponse(void)
 {
   StaticJsonBuffer<250> jsonBuffer;
   JsonObject& jsonObj = jsonBuffer.createObject();
-  jsonObj["state"] = ledContext.state;
-  jsonObj["brightness"] = ledContext.brightness;
   jsonObj["state"] = ((ledContext.state == LED_STATE_ON) ? "ON" : "OFF");
-  jsonObj["white_value"] = ledContext.whiteValue;
+  jsonObj["brightness"] = ledContext.brightness;
   jsonObj["color_temp"] = ledContext.colorTempRaw;
+  jsonObj["white_value"] = ledContext.whiteValue;
   if (ledContext.nextEffect != LED_INVALID_EFFECT)
   {
     jsonObj["effect"] = effects[ledContext.nextEffect].effect;
@@ -618,10 +626,14 @@ static void mqttSendResponse(void)
   char buffer[size];
   jsonObj.printTo(buffer, sizeof(buffer));
   buffer[size] = '\0';
-  mqttClient.publish(MQTT_STATE_TOPIC, buffer, true);
+  if (!mqttClient.publish(MQTT_STATE_TOPIC, buffer, true))
+  {
+    Serial.printf(MQTT_LOG "Error sending MQTT response!" NL);
+    return;
+  }
 
   Serial.printf(MQTT_LOG "Response topic: %s" NL, MQTT_STATE_TOPIC);
-  for (int i = 0; i < size; i++)
+  for (int i = 0; i < size-1; i++)
   {
     Serial.print((char)buffer[i]);
   }
@@ -841,7 +853,7 @@ static void effectXmasLoop(void)
   if (doit == 0)
   {
     //Serial.printf("FLash!\n");
-    uint8_t pixel = random(NUM_OF_LEDS-1);
+    uint16_t pixel = random(NUM_OF_LEDS-1);
   
     if (pixel > 0)
     {
@@ -921,6 +933,8 @@ static void effectFallingLoop(void)
 
   }
   fallingPos = (fallingPos + 1) % NUM_OF_LEDS_PER_SEGMENT;
+
+  addAmbientBacklightColor();
 }
 
 static void effectFireInit(void)
@@ -993,25 +1007,9 @@ static void effectFireLoop(void)
       }
     }
   }
+  
+  addAmbientBacklightColor();
 
-  // set background light
-  double intensity = (double)((double)(ledContext.brightness-1) / (double)255);
-  uint8_t r = ledContext.colorR;
-  uint8_t g = ledContext.colorG;
-  uint8_t b = ledContext.colorB;
-  r = (int)((double)r * intensity);
-  g = (int)((double)g * intensity);
-  b = (int)((double)b * intensity);
-
-  for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
-  {
-    RgbwColor color = strip.GetPixelColor(i);
-    color.R = MAX(color.R, r);
-    color.G = MAX(color.G, g);
-    color.B = MAX(color.B, b);
-    color.W = ledContext.whiteValue;
-    strip.SetPixelColor(i, color);
-  }
 }
 
 /*** MeteorRain globals ***/
@@ -1282,7 +1280,60 @@ static void effectRainbowLoop(void)
     ledContext.whiteValue));
 }
 
+/*** Running globals ***/
+double runningPos = 0;
+
+static void effectRunningInit(void)
+{
+  runningPos = 0.0;
+  for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
+  {
+    effectRunningLoop();
+  }
+}
+
+static void effectRunningLoop(void)
+{
+  effectRunningSetPixelColor();
+  addAmbientBacklightColor();
+}
+
+static void effectRunningSetPixelColor(void)
+{
+  strip.RotateRight(1);
+  strip.SetPixelColor(0, RgbwColor(
+    ((sin(runningPos) * 127 + 128)/255) * ledContext.colorR,
+    ((sin(runningPos) * 127 + 128)/255) * ledContext.colorG,  
+    ((sin(runningPos) * 127 + 128)/255) * ledContext.colorB,
+    0));
+  runningPos += ledContext.colorTemp + 0.01;
+
+  // todo calculate reset of runningPos so that effect doesnt glitch at overflow of runningPos.
+}
+
 /*** Helper functions ***/
+
+static void addAmbientBacklightColor(void)
+{
+  // set background light
+  double intensity = (double)((double)(ledContext.brightness-1) / (double)255);
+  uint8_t r = ledContext.colorR;
+  uint8_t g = ledContext.colorG;
+  uint8_t b = ledContext.colorB;
+  r = (int)((double)r * intensity);
+  g = (int)((double)g * intensity);
+  b = (int)((double)b * intensity);
+
+  for (uint16_t i = 0; i < NUM_OF_LEDS; i++)
+  {
+    RgbwColor color = strip.GetPixelColor(i);
+    color.R = MAX(color.R, r);
+    color.G = MAX(color.G, g);
+    color.B = MAX(color.B, b);
+    color.W = ledContext.whiteValue;
+    strip.SetPixelColor(i, color);
+  }
+}
 
 RgbwColor getColor(uint8_t segment, uint16_t pixel)
 {
